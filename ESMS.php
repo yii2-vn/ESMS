@@ -10,9 +10,10 @@ namespace yii2vn\esms;
 use Yii;
 use yii\base\Component;
 use yii\base\InvalidConfigException;
+use yii\base\NotSupportedException;
 use yii\httpclient\Client;
 use yii\httpclient\Response;
-
+use yii\httpclient\Exception as HttpClientException;
 
 /**
  * Component hổ trợ gọi API từ dịch vụ [ESMS](http://esms.vn) để gửi tin nhắn đến khách hàng và tạo voice call.
@@ -20,6 +21,7 @@ use yii\httpclient\Response;
  *
  * @package yii2vn\esms
  * @author Vuong Minh <vuongxuongminh@gmail.com>
+ * @since 1.0
  */
 class ESMS extends Component
 {
@@ -54,6 +56,16 @@ class ESMS extends Component
      */
     const BASE_VOICE_URL = 'http://voiceapi.esms.vn/MainService.svc/json';
 
+    /**
+     * Loại voice call đọc không ngắt khoản (dùng để đọc một đoạn văn bản, một lời nhắc)
+     */
+    const VOICE_CALL_TYPE_STR = 'typeStr';
+
+    /**
+     * Loại voice call đọc ngắt từng ký tự (dùng để tạo OTP)
+     */
+    const VOICE_CALL_TYPE_NUM = 'typeNum';
+
 
     /**
      * @var string
@@ -72,11 +84,11 @@ class ESMS extends Component
     public $secretKey;
 
     /**
-     * @var array
+     * @var string
      *
-     * Mảng thiết lập cấu hình i18n để phiển dịch đa ngôn ngữ của các câu thông báo.
+     * Thuộc tính xác định danh mục phiên dịch các câu thông báo trên thuộc tính đối tượng `i18n`. Mặc định sẽ là app.
      */
-    public $translationConfig = [];
+    public $translationCategory = 'app';
 
     /**
      * @var string|\yii\i18n\I18N
@@ -98,6 +110,7 @@ class ESMS extends Component
         102 => 'Tài khoản đã bị khóa',
         103 => 'Số dư tài khoản không đủ dể gửi tin',
         104 => 'Mã Brandname không đúng',
+        105 => 'Id tin nhắn không tồn tại',
         118 => 'Loại tin nhắn không hợp lệ',
         119 => 'Brandname quảng cáo phải gửi ít nhất 20 số điện thoại',
         131 => 'Tin nhắn brandname quảng cáo độ dài tối đa 422 kí tự',
@@ -117,12 +130,6 @@ class ESMS extends Component
             $this->i18n = Yii::$app->get($this->i18n);
         }
 
-        $i18n = $this->i18n;
-        if (empty($this->translationConfig)) {
-            $i18n->translations[static::className()] = isset($i18n->translations['app']) ? $i18n->translations['app'] : $i18n->translations['app*'];
-        } else {
-            $i18n->translations[static::className()] = $this->translationConfig;
-        }
         parent::init();
     }
 
@@ -224,7 +231,7 @@ class ESMS extends Component
         if ($clearErrors) {
             $this->setErrors([]);
         }
-        if ($this->beforeSendSMS()) {
+        if ($this->beforeSend()) {
             $queryData = array_merge($params, [
                 'Phone' => $phone,
                 'Content' => $message,
@@ -236,7 +243,7 @@ class ESMS extends Component
             $client->baseUrl = static::BASE_REST_URL;
             $response = $client->get('SendMultipleMessage_V4_get', $queryData)->send();
             $responseData = $this->ensureResponseData($response);
-            return $this->afterSendSMS($responseData);
+            return $this->afterSend($responseData);
         } else {
             return false;
         }
@@ -244,6 +251,7 @@ class ESMS extends Component
 
     /**
      * Phương thức gọi api gửi sms nhiều số điện thoại, nội dung cùng một lúc.
+     *
      * @param string[] $phones Tập hợp số điện thoại gửi tin nhắn đến có thể kèm theo tin nhắn riêng biệt.
      *
      * + Ví dụ cấu hình khi gửi tin riêng biệt:
@@ -263,7 +271,7 @@ class ESMS extends Component
      *      '01213141516', '0909116115', '0909117118', ...
      * ], 'Cuoc hop ngay mai vao luc 8h! Nho di dung gio');
      * Như bạn thấy các thành phần không có khóa là số điện thoại thì mặc định sẽ sử dụng tin nhắn chung!
-     * @param null $message Nội dung gửi tin nhắn được sử dụng chung cho các số điện thoại không có tin riêng biệt.
+     * @param null|string $message Nội dung gửi tin nhắn được sử dụng chung cho các số điện thoại không có tin riêng biệt.
      * @param int $type Loại tin nhắn muốn gửi (1, 2, 3, 4, 6, 7, 8, 13 tìm hiểu trong tài liệu từ ESMS).
      * @param array $params Các thông số phụ thuộc vào loại tin nhắn như `Sandbox`, `Brandname`...
      * Ví dụ:
@@ -304,42 +312,27 @@ class ESMS extends Component
     }
 
     /**
-     * Phương thức này được gọi trước khi gửi SMS, nhằm thực hiện các tác vụ chèn thêm của bạn trước khi gửi tin, ví dụ như ghi lại lịch sử.
-     * Lưu ý: khi bạn overwrite lại phương thức này hãy chắc rằng bạn vẫn đảm bảo `trigger` sự kiện `EVENT_BEFORE_SEND_SMS`
-     *
-     * @return bool trả về kiểu `bool` được trích ra từ sự kiện.
-     * Nếu như bạn muốn ngừng việc gửi tin ví một lý do nào đó thì hãy thiết lập thuộc tính `isValid` trong sự kiện về `false`.
-     */
-    public function beforeSendSMS()
-    {
-        $event = new Event;
-        $this->trigger(static::EVENT_BEFORE_SEND_SMS, $event);
-        return $event->isValid;
-    }
-
-    /**
-     * Phương thức này được gọi sau khi gửi SMS, nhằm thực hiện việc kiểm soát dữ liệu phản hồi từ ESMS.
-     * Từ đó bạn có thể thêm một vài thành phần vào mảng dữ liệu phản hồi hoặc thực hiện vài tác vụ liên quan đến sau khi gửi tin.
-     *
-     * @param array|bool $responseData dữ liệu phản hồi từ ESMS. Nếu là `false` nghĩa là có lỗi xảy ra trong quá trình gửi.
-     * @return array|bool dữ liệu phản hồi sau khi được đưa vào các sự kiện diễn ra (dữ liệu trả về cuối cùng)
-     */
-    public function afterSendSMS($responseData)
-    {
-        $event = new Event(['responseData' => $responseData]);
-        $this->trigger(static::EVENT_AFTER_SEND_SMS, $event);
-        return $event->responseData;
-    }
-
-    /**
      * Phương thức kiểm tra trạng thái của tin nhắn thông qua ID của nó.
      * Kết quả trả về sẽ giúp bạn biết trạng thái của tin nhắn.
+     * Ví dụ:
+     * ```php
+     * [
+     *      "CodeResponse" => "100",
+     *      "SMSID" => "XXXX",
+     *      "SendFailed" => 0,
+     *      "SendStatus" => 5,
+     *      "SendSuccess" => 1,
+     *      "TotalReceiver" => 1,
+     *      "TotalSent" => 1
+     * ]
+     *
+     * ```
      *
      * @param string $smsId của tin nhắn. Tham trị này nằm trong kết quả gửi tin nhắn của phương thức `sendSMS` hay `batchSendSMS`.
      * @return array|bool Trả về giá trị là mảng khi thành công, `false` khi thất bại.
      * Khi là `false` bạn hãy gọi phương thức `getError` để kiểm tra lỗi.
      */
-    public function getSendSMSStatus($smsId)
+    public function getSendStatus($smsId)
     {
         $queryData = [
             'APIKey' => $this->apiKey,
@@ -352,17 +345,124 @@ class ESMS extends Component
         return $this->ensureResponseData($response);
     }
 
-    public function getSMSReceiverStatus($refId)
+    /**
+     * Phương thức lấy danh sách người nhận tin thông qua ID của tin nhắn.
+     *
+     * Ví dụ kết quả trả về:
+     * [
+     *      "CodeResult" => "100",
+     *      "ReceiverList" => [
+     *          ["IsSent" => true, "Phone" => "XXXX", "SentResult" => true],
+     *          ["IsSent" => true, "Phone" =>"BBBB", "SentResult" => true],
+     *      ]
+     * ]
+     * @param string $smsId của tin nhắn muốn lấy thông tin
+     * @return array|bool Trả về giá trị là mảng khi thành công, `false` khi thất bại.
+     * Khi là `false` bạn hãy gọi phương thức `getError` để kiểm tra lỗi.
+     */
+    public function getReceiverStatus($smsId)
     {
         $queryData = [
             'APIKey' => $this->apiKey,
             'SecretKey' => $this->secretKey,
-            'RefId' => $refId
+            'RefId' => $smsId
         ];
         $client = $this->getClient();
         $client->baseUrl = static::BASE_REST_URL;
         $response = $client->get('GetSmsReceiverStatus_get', $queryData)->send();
         return $this->ensureResponseData($response);
+    }
+
+    /**
+     * Phương thức dùng để gọi api tạo một cuộc gọi thoại đến số điện thoại khách hàng truyền vào
+     *
+     * @param string $phone Số điện thoại khách hàng sẽ nhận cuộc gọi thoại
+     * @param string $apiCode Mã api voice call dùng để xác định mẫu âm thanh bạn đăng ký (ESMS cấp)
+     * @param string $passCode Mã mật khẩu của api voice dùng để xác định mẫu âm thanh bạn đăng ký (ESMS cấp)
+     * @param string $str Đoạn văn bản hoặc ký tự dùng để tạo voice call
+     * @param string $type Loại voice call đọc từng ký tự một hay đọc theo kiểu văn bản (ký tự dùng cho OTP, văn bản dành cho lời nhắc)
+     * @param bool $clearErrors Tham trị xác định có xóa tất cả lỗi cũ trước khi gửi hay không
+     * @return array|bool Trả về giá trị là mảng khi thành công, `false` khi thất bại.
+     * Khi là `false` bạn hãy gọi phương thức `getError` để kiểm tra lỗi.
+     * @throws NotSupportedException
+     */
+    public function sendVoiceCall($phone, $apiCode, $passCode, $str, $type = self::VOICE_CALL_TYPE_STR, $clearErrors = false)
+    {
+
+        if ($clearErrors) {
+            $this->setErrors([]);
+        }
+        if ($this->beforeSend(false)) {
+            $queryData = [
+                'ApiKey' => $this->apiKey,
+                'SecretKey' => $this->secretKey,
+                'Phone' => $phone,
+                'ApiCode' => $apiCode,
+                'PassCode' => $passCode
+            ];
+
+            $queryData['VarStr'] = $queryData['VarNum'] = $str;
+
+            $client = $this->getClient();
+            $client->baseUrl = static::BASE_VOICE_URL;
+            $response = $client->get('MakeCall', $queryData)->send();
+            $responseData = $this->ensureResponseData($response);
+            return $this->afterSend($responseData, false);
+        } else {
+            return false;
+        }
+    }
+
+    /**
+     * Phương thức gọi api gửi gọi thoại đến nhiều số điện thoại, nội dung cùng một lúc.
+     *
+     * @param string[] $phones Tập hợp số điện thoại để gửi gọi thoại đến có thể kèm theo đoạn hội thoại riêng biệt
+     *
+     * + Ví dụ cấu hình khi tạo đoạn gọi thoại riêng biệt:
+     * $esms->batchSendVoiceCall([
+     *      '0909113911' => 'Hop khan cap luc 8h',
+     *      '0909911113' => 'Cuoc hop ngay mai luc 8h',
+     *      ....
+     * ]);
+     *
+     * + Ví dụ cấu hình khi gửi một đoạn gọi thoại đến tất cả số điện thoại có cùng nội dung:
+     * $esms->batchSendVoiceCall(['0909113911', '0909911113'], 'Cuoc hop ngay mai vao luc 8h');
+     *
+     * + Ví dụ sử dụng kết hợp cả 2 (gửi gọi thoại riêng biệt đến một vài số còn lại sử dụng nội dung chung):
+     * $esms->batchSendVoiceCall([
+     *      '0909113911' => 'Hop khan cap luc 8h',
+     *      '0909911113' => 'Cuoc hop ngay mai luc 8h',
+     *      '01213141516', '0909116115', '0909117118', ...
+     * ], 'Cuoc hop ngay mai vao luc 8h! Nho di dung gio');
+     * Như bạn thấy các thành phần không có khóa là số điện thoại thì mặc định sẽ sử dụng nội dung gửi chung!
+     * @param string $apiCode Mã api voice call dùng để xác định mẫu âm thanh bạn đăng ký (ESMS cấp)
+     * @param string $passCode Mã mật khẩu của api voice dùng để xác định mẫu âm thanh bạn đăng ký (ESMS cấp)
+     * @param null|string $str Đoạn văn bản hoặc ký tự dùng để tạo voice call
+     * @param string $type Loại voice call đọc từng ký tự một hay đọc theo kiểu văn bản (ký tự dùng cho OTP, văn bản dành cho lời nhắc)
+     * @param bool $clearErrors Tham trị xác định có xóa tất cả lỗi cũ trước khi gửi hay không
+     * @param bool $skipError Tham trị dùng để xác định bỏ qua lỗi hoặc dừng quá trình lại khi gửi gọi thoại hay không.
+     * Mặc định là `false` nghĩa là nếu có lỗi thì KHÔNG bỏ qua, và dừng quá trịnh lại.
+     * @return bool[]|array[] Mảng kết quả trả. Các thành phần trên mảng có khóa là số điện thoại đã gọi thoại và giá trị là kết quả của quá trình gọi thoại.
+     * @throws InvalidConfigException
+     */
+    public function batchSendVoiceCall($phones, $apiCode, $passCode, $str = null, $type = self::VOICE_CALL_TYPE_STR, $clearErrors = false, $skipError = false)
+    {
+        if (!empty($phones)) {
+            $responseData = [];
+            foreach ($phones as $phone => $customStr) {
+                if (is_int($phone)) {// not is associative
+                    $phone = $customStr;
+                    $customStr = $str;
+                }
+                $responseData[$phone] = $this->sendVoiceCall($phone, $apiCode, $passCode, $customStr, $type, $clearErrors);
+                if ($responseData[$phone] === false && !$skipError) {
+                    return $responseData;
+                }
+            }
+            return $responseData;
+        } else {
+            throw new InvalidConfigException('Param `phones` must be an array!');
+        }
     }
 
     /**
@@ -374,26 +474,59 @@ class ESMS extends Component
      */
     protected function ensureResponseData($response)
     {
-        $data = $response->getData();
-        if (is_array($data)) {
-            if (isset($data['CodeResponse'])) {
-                $code = $data['CodeResponse'];
-            } elseif (isset($data['CodeResult'])) {
-                $code = $data['CodeResult'];
-            } else {
-                $code = 99;
-            }
+        try {
+            $data = $response->getData();
+            if (is_array($data)) {
+                if (isset($data['CodeResponse'])) {
+                    $code = $data['CodeResponse'];
+                } elseif (isset($data['CodeResult'])) {
+                    $code = $data['CodeResult'];
+                } else {
+                    $code = 99;
+                }
 
-            if ($code == 100) {
-                return $data;
+                if ($code == 100) {
+                    return $data;
+                } else {
+                    $this->addError($code);
+                }
             } else {
-                $this->addError($code);
+                $this->addError(99);
             }
-        } else {
+        } catch (HttpClientException $exception) {
             $this->addError(99);
         }
-
         return false;
+    }
+
+    /**
+     * Phương thức này được gọi trước khi gửi SMS, nhằm thực hiện các tác vụ chèn thêm của bạn trước khi gửi tin, ví dụ như ghi lại lịch sử.
+     * Lưu ý: khi bạn overwrite lại phương thức này hãy chắc rằng bạn vẫn đảm bảo `trigger` sự kiện `EVENT_BEFORE_SEND_SMS`
+     *
+     * @param bool $sms Tham trị xác định có phải sự kiện gửi tin hay không. Nếu không thì là sự kiện voice call
+     * @return bool trả về kiểu `bool` được trích ra từ sự kiện.
+     * Nếu như bạn muốn ngừng việc gửi tin ví một lý do nào đó thì hãy thiết lập thuộc tính `isValid` trong sự kiện về `false`.
+     */
+    public function beforeSend($sms = true)
+    {
+        $event = new Event;
+        $this->trigger($sms ? static::EVENT_BEFORE_SEND_SMS : static::EVENT_BEFORE_SEND_VOICE_CALL, $event);
+        return $event->isValid;
+    }
+
+    /**
+     * Phương thức này được gọi sau khi gửi SMS, nhằm thực hiện việc kiểm soát dữ liệu phản hồi từ ESMS.
+     * Từ đó bạn có thể thêm một vài thành phần vào mảng dữ liệu phản hồi hoặc thực hiện vài tác vụ liên quan đến sau khi gửi tin.
+     *
+     * @param array|bool $responseData dữ liệu phản hồi từ ESMS. Nếu là `false` nghĩa là có lỗi xảy ra trong quá trình gửi.
+     * @param bool $sms Tham trị xác định có phải sự kiện gửi tin hay không. Nếu không thì là sự kiện voice call
+     * @return array|bool dữ liệu phản hồi sau khi được đưa vào các sự kiện diễn ra (dữ liệu trả về cuối cùng)
+     */
+    public function afterSend($responseData, $sms = true)
+    {
+        $event = new Event(['responseData' => $responseData]);
+        $this->trigger($sms ? static::EVENT_AFTER_SEND_SMS : static::EVENT_AFTER_SEND_VOICE_CALL, $event);
+        return $event->responseData;
     }
 
     /**
@@ -411,7 +544,7 @@ class ESMS extends Component
     public function addError($responseCode)
     {
         $responseCode = (int)$responseCode;
-        $this->_errors[] = $this->i18n->translate(static::className(), static::$responseCodes[$responseCode], [], 'vi');
+        $this->_errors[] = $this->i18n->translate($this->translationCategory, static::$responseCodes[$responseCode], [], 'vi');
     }
 
     /**

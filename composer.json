@@ -1,0 +1,28 @@
+{
+  "name": "yii2vn/esms",
+  "description": "Api client of an ESMS service",
+  "type": "yii2-extension",
+  "keywords": [
+    "yii2",
+    "extension",
+    "sms",
+    "esms",
+    "voice-call"
+  ],
+  "license": "BSD-3-Clause",
+  "authors": [
+    {
+      "name": "Vuong Minh",
+      "email": "vuongxuongminh@gmail.com"
+    }
+  ],
+  "require": {
+    "yiisoft/yii2": "*",
+    "yiisoft/yii2-httpclient": "~2.0.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "yii2vn\\esms\\": ""
+    }
+  }
+}

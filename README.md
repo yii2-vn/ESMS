@@ -17,18 +17,18 @@ Bạn phải cài đặt ứng dụng này thông qua [composer](http://getcompo
 Sau khi cài đặt composer, thực hiện câu lệnh sau:
 
 ```
-php composer.phar require --prefer-dist yii2-vn/esms
+php composer.phar require --prefer-dist yii2vn/esms
 ```
 
 >Lưu ý đối với những ai sử dụng `window` thì thực hiện câu lệnh sau:
 >```
->composer require --prefer-dist yii2-vn/esms
+>composer require --prefer-dist yii2vn/esms
 >```
 
 Hoặc thêm:
 
 ```json
-"yii2-vn/esms": "*"
+"yii2vn/esms": "*"
 ```
 
 vào composer.json

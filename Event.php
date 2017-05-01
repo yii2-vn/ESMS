@@ -16,6 +16,7 @@ use yii\base\Event as BaseEvent;
  *
  * @package yii2vn\esms
  * @author Vuong Minh <vuongxuongminh@gmail.com>
+ * @since 1.0
  */
 class Event extends BaseEvent
 {

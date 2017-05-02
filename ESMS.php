@@ -11,6 +11,7 @@ use Yii;
 use yii\base\Component;
 use yii\base\InvalidConfigException;
 use yii\base\NotSupportedException;
+use yii\di\Instance;
 use yii\httpclient\Client;
 use yii\httpclient\Response;
 use yii\httpclient\Exception as HttpClientException;
@@ -126,9 +127,7 @@ class ESMS extends Component
             throw new InvalidConfigException('`apiKey` property and `secretKey` property must be set!');
         }
 
-        if (is_string($this->i18n)) {
-            $this->i18n = Yii::$app->get($this->i18n);
-        }
+        $this->i18n = Instance::ensure($this->i18n, 'yii\i18n\I18N');
 
         parent::init();
     }

@@ -543,7 +543,7 @@ class ESMS extends Component
     public function addError($responseCode)
     {
         $responseCode = (int)$responseCode;
-        $this->_errors[] = $this->i18n->translate($this->translationCategory, static::$responseCodes[$responseCode], [], 'vi');
+        $this->_errors[] = $this->i18n->translate($this->translationCategory, static::$responseCodes[$responseCode], [], Yii::$app->language);
     }
 
     /**
